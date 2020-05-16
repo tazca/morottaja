@@ -1,73 +1,122 @@
-{-# LANGUAGE DeriveGeneric, DuplicateRecordFields #-}
+{-# LANGUAGE DuplicateRecordFields, OverloadedStrings, RecordWildCards #-}
 
 module Types where
 
 import Data.Aeson
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as B
 import Data.Text
 import Data.Time
-import GHC.Generics
 
+{--
+Huomioi tilanteet joissa result != 200 virhetilanteiden hienosäätöä varten; nyt riittää vain että parser palauttaa virheen.
+
+--}
 data LoginRequest =
   LoginRequest { username :: Text
                , password :: Text
-               } deriving (Generic, Show)
+               } deriving (Show)
 
 instance ToJSON LoginRequest where
--- Generic derivoi
+  toJSON LoginRequest{..} =
+    object [
+    "username" .= username,
+    "password" .= password
+    ]
 
 data LoginData =
   LoginData { username :: Text
             , token :: Text
             , hash :: Text
             , authorized :: Bool
-            } deriving (Generic, Show)
+            } deriving (Show)
 
 instance FromJSON LoginData where
--- Generic derivoi
+  parseJSON = withObject "LoginData" $ \v -> do
+    nestedLogin <- v .: "value"
+    username <- nestedLogin .: "username"
+    token <- nestedLogin .: "token"
+    hash <- nestedLogin .: "hash"
+    authorized <- nestedLogin .: "authorized"
+    return LoginData{..}
 
 data MagsRequest =
   MagsRequest { startDate :: UTCTime -- "2020-05-04T20:59:59.999Z"
               , endDate :: UTCTime -- "2020-05-14T20:59:59.999Z"
               }
 
-data AamulehtiMag =
+data AamulehtiMag = -- value > mags > Array Aamulehti
   AamulehtiMag { uuid :: Text
                , name :: Text -- == date ("14.5.2020")
                , publishedAt :: UTCTime -- "2020-05-14T00:00:00.000Z"
-               }
+               } deriving (Show)
 
---instance FromJSON AamulehtiMag where
+instance FromJSON AamulehtiMag where
+  parseJSON = withObject "AamulehtiMag" $ \v -> do
+    uuid <- v .: "uuid"
+    name <- v .: "name"
+    publishedAt <- v .: "publishedAt"
+    return AamulehtiMag{..}
 
+data Mags =
+  Mags { mags :: [AamulehtiMag]
+       } deriving (Show)
 
-newtype Mags = Mags [AamulehtiMag]
+instance FromJSON Mags where
+  parseJSON = withObject "Mags" $ \v -> do
+    nestedFirst <- v .: "value"
+    nestedSecond <- nestedFirst .: "mags"
+    mags <- nestedSecond .: "Aamulehti"
+    return Mags{..}
 
 data MH5Cookies =
   MH5Cookies { mh5_tok :: Text
              , mh5_ret :: Text
              }
 
-data Magazine = -- magazine.json > variants > html5_splitjpg_960
-  Magazine { baseurl :: Text
-           , spreads :: [Spread]
-           }
 
---instance FromJSON Magazine where
 
-data Spread = -- magazine.json > variants > html5_splitjpg_960 > spreads
+data Spread = -- magazine.json > variants > html5_splitjpg_960 > Array spreads
   Spread { leftPage :: Maybe Text
          -- left > portrait > images > background/overlay
          , leftOverlay :: Maybe Text
          , rightPage :: Maybe Text
          -- right > portrait > images > background/overlay
          , rightOverlay :: Maybe Text
-         }
+         } deriving (Show)
 
---instance FromJSON Spread where
+instance FromJSON Spread where
+  parseJSON = withObject "Spread" $ \v -> do
+    let maybeMap obj str = mapM (\x -> x .: str) obj -- >>= olisi elegantimpi
+    nestedLeft <- v .:? "left"
+
+    nestedLPortrait <- maybeMap nestedLeft "portrait"
+    nestedLImages <- maybeMap nestedLPortrait "images"
+    leftPage <- maybeMap nestedLImages "background"
+    leftOverlay <- maybeMap nestedLImages "overlay"
+
+    nestedRight <- v .:? "right"
+    nestedRPortrait <- maybeMap nestedRight "portrait"
+    nestedRImages <- maybeMap nestedRPortrait "images"
+    rightPage <- maybeMap nestedRImages "background"
+    rightOverlay <- maybeMap nestedRImages "overlay"
+    return Spread{..}
+
+data Magazine = -- magazine.json > variants > html5_splitjpg_960
+  Magazine { baseurl :: Text
+           , spreads :: [Spread]
+           } deriving (Show)
+
+instance FromJSON Magazine where
+  parseJSON = withObject "Magazine" $ \v -> do
+    nestedFirst <- v .: "variants"
+    nestedSecond <- nestedFirst .: "html5_splitjpg_960"
+    baseurl <- nestedSecond .: "baseurl"
+    spreads <- nestedSecond .: "spreads"
+    return Magazine{..}
 
 data AamulehtiPage =
-  AamulehtiPage { page :: BS.ByteString -- jpeg binary
-                , overlay :: BS.ByteString -- png binary
+  AamulehtiPage { page :: B.ByteString -- jpeg binary
+                , overlay :: B.ByteString -- png binary
                 }
 
 data CompleteAamulehti =

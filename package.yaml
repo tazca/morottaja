@@ -25,6 +25,7 @@ library:
   - base
   - aeson
   - bytestring
+  - http-conduit
   - text
   - time
   source-dirs: library
