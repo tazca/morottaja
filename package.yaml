@@ -25,7 +25,9 @@ library:
   - base
   - aeson
   - bytestring
+  - filepath
   - http-conduit
+  - random
   - text
   - time
   source-dirs: library

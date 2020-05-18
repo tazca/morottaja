@@ -4,16 +4,16 @@ module Types where
 
 import Data.Aeson
 import qualified Data.ByteString as B
-import Data.Text
+import qualified Data.Text as T
 import Data.Time
 
 {--
-Huomioi tilanteet joissa result != 200 virhetilanteiden hienosäätöä varten; nyt riittää vain että parser palauttaa virheen.
+Huomioi tilanteet joissa JSONin result /= 200 virhetilanteiden hienosäätöä varten; nyt riittää vain että parser palauttaa virheen.
 
 --}
 data LoginRequest =
-  LoginRequest { username :: Text
-               , password :: Text
+  LoginRequest { username :: T.Text
+               , password :: T.Text
                } deriving (Show)
 
 instance ToJSON LoginRequest where
@@ -24,9 +24,9 @@ instance ToJSON LoginRequest where
     ]
 
 data LoginData =
-  LoginData { username :: Text
-            , token :: Text
-            , hash :: Text
+  LoginData { username :: T.Text
+            , token :: T.Text
+            , hash :: T.Text
             , authorized :: Bool
             } deriving (Show)
 
@@ -45,8 +45,8 @@ data MagsRequest =
               }
 
 data AamulehtiMag = -- value > mags > Array Aamulehti
-  AamulehtiMag { uuid :: Text
-               , name :: Text -- == date ("14.5.2020")
+  AamulehtiMag { uuid :: T.Text
+               , name :: T.Text -- == date ("14.5.2020")
                , publishedAt :: UTCTime -- "2020-05-14T00:00:00.000Z"
                } deriving (Show)
 
@@ -69,19 +69,15 @@ instance FromJSON Mags where
     return Mags{..}
 
 data MH5Cookies =
-  MH5Cookies { mh5_tok :: Text
-             , mh5_ret :: Text
+  MH5Cookies { mh5_tok :: T.Text
+             , mh5_ret :: T.Text
              }
 
 
 
-data Spread = -- magazine.json > variants > html5_splitjpg_960 > Array spreads
-  Spread { leftPage :: Maybe Text
-         -- left > portrait > images > background/overlay
-         , leftOverlay :: Maybe Text
-         , rightPage :: Maybe Text
-         -- right > portrait > images > background/overlay
-         , rightOverlay :: Maybe Text
+data Spread =
+  Spread { leftPage :: Maybe (T.Text, T.Text)
+         , rightPage :: Maybe (T.Text, T.Text)
          } deriving (Show)
 
 instance FromJSON Spread where
@@ -99,10 +95,15 @@ instance FromJSON Spread where
     nestedRImages <- maybeMap nestedRPortrait "images"
     rightPage <- maybeMap nestedRImages "background"
     rightOverlay <- maybeMap nestedRImages "overlay"
-    return Spread{..}
+    return $ Spread (fuseMaybes leftPage leftOverlay) (fuseMaybes rightPage rightOverlay)
+      where
+        fuseMaybes (Just pg) (Just ol) = Just (pg, ol)
+        fuseMaybes (Just _) Nothing = Nothing
+        fuseMaybes Nothing (Just _) = Nothing
+        fuseMaybes Nothing Nothing = Nothing
 
 data Magazine = -- magazine.json > variants > html5_splitjpg_960
-  Magazine { baseurl :: Text
+  Magazine { baseurl :: T.Text
            , spreads :: [Spread]
            } deriving (Show)
 
@@ -114,12 +115,14 @@ instance FromJSON Magazine where
     spreads <- nestedSecond .: "spreads"
     return Magazine{..}
 
+type PageNumber = Int
+
 data AamulehtiPage =
   AamulehtiPage { page :: B.ByteString -- jpeg binary
                 , overlay :: B.ByteString -- png binary
+                , pageNumber :: PageNumber
                 }
 
 data CompleteAamulehti =
-  CompleteAamulehti { date :: Day
-                    , pages :: [AamulehtiPage]
-                    }
+  CompleteAamulehti { pages :: [AamulehtiPage]
+                    } -- TODO: date
