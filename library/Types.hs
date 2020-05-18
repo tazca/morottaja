@@ -6,6 +6,7 @@ import Data.Aeson
 import qualified Data.ByteString as B
 import qualified Data.Text as T
 import Data.Time
+import Network.HTTP.Conduit (CookieJar)
 
 {--
 Huomioi tilanteet joissa JSONin result /= 200 virhetilanteiden hienosäätöä varten; nyt riittää vain että parser palauttaa virheen.
@@ -40,7 +41,8 @@ instance FromJSON LoginData where
     return LoginData{..}
 
 data MagsRequest =
-  MagsRequest { startDate :: UTCTime -- "2020-05-04T20:59:59.999Z"
+  MagsRequest { startDate :: Maybe UTCTime -- "2020-05-04T20:59:59.999Z"
+                             -- if Nothing then endDate - 10 days mimicking the website
               , endDate :: UTCTime -- "2020-05-14T20:59:59.999Z"
               }
 
@@ -68,12 +70,16 @@ instance FromJSON Mags where
     mags <- nestedSecond .: "Aamulehti"
     return Mags{..}
 
-data MH5Cookies =
-  MH5Cookies { mh5_tok :: T.Text
-             , mh5_ret :: T.Text
-             }
+data RichiefiRedirect =
+  RichiefiRedirect { redirect :: T.Text
+                   }
 
+instance FromJSON RichiefiRedirect where
+  parseJSON = withObject "RichiefiRedirect" $ \v -> do
+    redirect <- v .: "value"
+    return RichiefiRedirect{..}
 
+type MH5Cookies = CookieJar
 
 data Spread =
   Spread { leftPage :: Maybe (T.Text, T.Text)

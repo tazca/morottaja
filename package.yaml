@@ -27,6 +27,7 @@ library:
   - bytestring
   - filepath
   - http-conduit
+  - http-types
   - random
   - text
   - time
