@@ -31,7 +31,7 @@ main = do
   loginData <- getAamulehtiCreds >>= getLoginData
   print loginData
 
-  magsEndDate <- iso8601ParseM isoDate --"2020-05-18T20:59:59.999Z"
+  magsEndDate <- iso8601ParseM (isoDate ++ "T20:59:59.999Z")
   let placeholderMagsCatalogReq = MagsRequest Nothing magsEndDate
   magsCatalog <- getMags placeholderMagsCatalogReq
   print magsCatalog
