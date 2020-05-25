@@ -3,6 +3,8 @@
 module Print where
 
 import Control.Concurrent (threadDelay) -- delay in microseconds
+import Control.Monad.Except
+import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString as B
 import Data.Maybe (catMaybes, fromJust, isJust)
 import qualified Data.Text as T
@@ -11,35 +13,33 @@ import System.Random (randomRIO)
 
 import Types
 
-getMagazine :: Magazine -> IO CompleteAamulehti
-getMagazine Magazine{..} = do
-  let numberedSpreads = zip [0, 2..] spreads
-  completeAamulehti <- mapM (\(pnr, spr) -> getSpread pnr baseurl spr) numberedSpreads
-  return $ CompleteAamulehti
-    (concatMap (\(a, b) -> catMaybes [a, b]) completeAamulehti)
 
-getSpread :: PageNumber -> T.Text -> Spread -> IO (Maybe AamulehtiPage,
-                                                   Maybe AamulehtiPage)
-getSpread pnr baseUrl Spread{..} = do
-  leftSide <- mapM (getPage baseUrl) leftPage
-  rightSide <- mapM (getPage baseUrl) rightPage
-  mimicAHumanAndWaitBetweenSpreads
-  return (if isJust leftSide
-          then Just $ AamulehtiPage (head $ fromJust leftSide) (head $ tail $ fromJust leftSide) (pnr)
-          else Nothing,
-          if isJust rightSide
-          then Just $ AamulehtiPage (head $ fromJust rightSide) (head $ tail $ fromJust rightSide) (pnr + 1)
-          else Nothing) -- TODO: list <-> tuple wankkaus pois
-
-getPage :: T.Text -> (T.Text, T.Text) -> IO [B.ByteString]
-getPage baseUrl (page, overlay) = sequence [dlUrl (T.concat [baseUrl, "/", page]),
-                                            dlUrl (T.concat [baseUrl, "/", overlay])]
+aamulehtiDownload :: Magazine -> NetworkOperation CompleteAamulehti
+aamulehtiDownload Magazine{..} = do
+  let spreadNumbers = zip [0, 2..] spreads
+  CompleteAamulehti <$> concat <$> mapM (\(pnr, spr) -> aamulehtiSpread pnr baseurl spr) spreadNumbers
 
 
-dlUrl :: T.Text -> IO B.ByteString
-dlUrl pageUrl = do
-  req <- parseRequest $ T.unpack pageUrl
-  getResponseBody <$> httpBS req
+aamulehtiSpread :: PageNumber -> T.Text -> Spread -> NetworkOperation [AamulehtiPage]
+aamulehtiSpread pnr baseUrl Spread{..} = do
+  leftSide <- mapM (dlPage baseUrl) leftPage
+  rightSide <- mapM (dlPage baseUrl) rightPage
+  humaneWait ()
+  return $ catMaybes [fmap (buildPage pnr) leftSide,
+                      fmap (buildPage $ pnr + 1) rightSide]
+  where
+    buildPage pageN (p, o) = AamulehtiPage p o pageN
+
+
+dlPage :: T.Text -> (T.Text, T.Text) -> NetworkOperation (B.ByteString, B.ByteString)
+dlPage baseUrl (page, overlay) =
+  (,) <$> download (T.concat [baseUrl, "/", page]) <*> download (T.concat [baseUrl, "/", overlay])
+  where
+    download :: T.Text -> NetworkOperation B.ByteString
+    download url = do
+      req <- parseRequest (T.unpack url)
+      getResponseBody <$> httpBS req
+
 
 mimicAHumanAndWaitBetweenSpreads :: IO ()
 mimicAHumanAndWaitBetweenSpreads = do
@@ -48,23 +48,23 @@ mimicAHumanAndWaitBetweenSpreads = do
   die4 <- unNegateDie <$> randomRIO (-360, 75) :: IO Int
   let total = 1 + die2 + die3
         + die4
-  putStrLn ("Sivun kääntämiseen menee " ++ show total ++ "s.")
+  putStrLn ("Matkitaan ihmistä ja odotellaan " ++ show total ++ "s.")
   threadDelay (total * 1000000)
   where
     unNegateDie die = if die < 0 then 0 else die
 
-printMagazine :: CompleteAamulehti -> IO FilePath
-printMagazine CompleteAamulehti{..} = do
+humaneWait :: a -> NetworkOperation a
+humaneWait x = liftIO mimicAHumanAndWaitBetweenSpreads >> return x
+
+
+aamulehtiPrint :: CompleteAamulehti -> FileOperation FilePath
+aamulehtiPrint CompleteAamulehti{..} = do
   mapM_ writePages pages
-  -- tehdään PDF-kutsu
-  return "aamulehti.pdf"
+  -- tehdään ulkoinen imagemagick/pdf .sh kutsu?
+  return "./aamulehti.pdf"
   where
-    writePages :: AamulehtiPage -> IO ()
-    writePages AamulehtiPage{..} =
-      let pnr p
-            | p < 100 && p >= 10 = "0" ++ show p
-            | p < 10 = "00" ++ show p
-            | otherwise = show p
-      in do
-        B.writeFile ("pages/page_" ++ pnr pageNumber ++ ".jpg") page
-        B.writeFile ("pages/page_" ++ pnr pageNumber ++ "_overlay.png") overlay
+    writePages :: AamulehtiPage -> FileOperation ()
+    writePages AamulehtiPage{..} = do
+      let pnr p = T.unpack (T.justifyRight 3 '0' (T.pack $ show p))
+      liftIO $ B.writeFile ("pages/page_" ++ pnr pageNumber ++ ".jpg") page
+      liftIO $ B.writeFile ("pages/page_" ++ pnr pageNumber ++ "_overlay.png") overlay

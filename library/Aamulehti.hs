@@ -2,10 +2,13 @@
 
 module Aamulehti (main) where
 
+import Control.Monad.Except
+import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Data.Either
 import Data.Time
 import Data.Time.Format.ISO8601
@@ -15,52 +18,36 @@ import Login
 import Print
 import Types
 
+{--
+TODO: painospäivävalinta
+TODO: järkevöitä verkko-operaatioiden välillä odottelu (monad stackin bindiin integrointi?)
+-}
+
+
 -- | An example function.
 main :: IO ()
-main = do
-  --testMags <- LB.readFile jsonTestMags
-  --print (eitherDecode testMags :: Either String Mags)
-  --testMagazine <- LB.readFile jsonTestMagazine
-  --print (eitherDecode testMagazine :: Either String Magazine)
+main =
+  runExceptT (produceAamulehti >>= printAamulehti)
+  >>= print
 
-  isoDate <- getContents
+produceAamulehti :: NetworkOperation CompleteAamulehti
+produceAamulehti = do
+  catalog <- humaneWait =<< aamulehtiCatalog Nothing
+  readAamulehtiCreds
+    >>= aamulehtiLogin
+    >>= humaneWait
+    >>= aamulehtiRedirect (head $ mags catalog)
+    >>= aamulehtiMH5
+    >>= humaneWait
+    >>= aamulehtiMagazine
+    >>= aamulehtiDownload
 
-  creds <- getAamulehtiCreds
-  print (encode creds)
+printAamulehti :: CompleteAamulehti -> FileOperation FilePath
+printAamulehti = aamulehtiPrint
 
-  loginData <- getAamulehtiCreds >>= getLoginData
-  print loginData
-
-  magsEndDate <- iso8601ParseM (isoDate ++ "T20:59:59.999Z")
-  let placeholderMagsCatalogReq = MagsRequest Nothing magsEndDate
-  magsCatalog <- getMags placeholderMagsCatalogReq
-  print magsCatalog
-
-  case loginData of
-    (Just lData) -> do
-      case magsCatalog of
-        (Just mc) -> do
-          mh5 <- getMH5 (head $ mags mc) lData
-          print mh5
-          case mh5 of
-            (Just mh5Cookies) -> do
-              magazineJson <- getMagazineJson (head $ mags mc) mh5Cookies
-              print magazineJson
-              case magazineJson of
-                (Just zine) ->
-                  getMagazine zine >>= printMagazine >>= putStrLn
-                Nothing ->
-                  putStrLn "Ei saatu magazine.jsonia"
-            Nothing ->
-              putStrLn "MH5-keksit jäi saamatta."
-        Nothing ->
-          putStrLn "mags.jsonin hakeminen epäonnistui."
-    Nothing ->
-      putStrLn "Kirjautuminen epäonnistui."
-
-
-
-getAamulehtiCreds :: IO LoginRequest
-getAamulehtiCreds = do
-  creds <- T.lines <$> T.pack <$> readFile "aamulehtiCreds"
-  return $ LoginRequest (head creds) (head $ tail creds)
+readAamulehtiCreds :: FileOperation LoginRequest
+readAamulehtiCreds = do
+  creds <- liftIO $ T.lines <$> T.readFile "aamulehtiCreds"
+  if (length creds < 2)
+  then throwError "Kirjautumistunnus tai -salasana puuttuu aamulehtiCreds-tiedostosta."
+  else return $ LoginRequest (head creds) (head $ tail creds)

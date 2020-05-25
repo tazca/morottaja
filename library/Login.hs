@@ -2,7 +2,10 @@
 
 module Login where
 
+import Control.Monad.Except
+import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString.Char8 as B
+import Data.Maybe (fromJust, isJust)
 import qualified Data.Text as T
 import Data.Time
 import Data.Time.Format.ISO8601
@@ -12,65 +15,64 @@ import Network.HTTP.Types
 
 import Types
 
-getLoginData :: LoginRequest -> IO (Maybe LoginData)
-getLoginData loginReq =
-  let req = setRequestMethod "POST"
-        <$> setRequestBodyJSON loginReq
-        <$> parseRequest "https://www.aamulehti.fi/aas/login?publication=aamulehti" :: Maybe Request
-  in case req of
-       (Just r) -> do
-         print r
-         getResponseBody <$> httpJSON r
-       Nothing -> return Nothing
+aamulehtiCatalog :: Maybe MagsRequest -> NetworkOperation Mags
+aamulehtiCatalog cr = do
 
-getMags :: MagsRequest -> IO (Maybe Mags)
-getMags magsReq = do
-  let magsJsonReq = parseRequest
-                    ("https://www.aamulehti.fi/aas/mags?include_linked=1&publication=aamulehti&start_date="
-                     ++ iso8601Show (fillInStartDate (endDate magsReq))
-                     ++ "&end_date=" ++ iso8601Show (endDate magsReq))
-  case magsJsonReq of
-    (Just r) -> do
-      getResponseBody <$> httpJSON r
-      --mags <- httpJSON r :: IO (Response Mags)
-      --return (Just $ getResponseBody mags)
-    Nothing -> do
-      putStrLn "Virheellisesti muodostettu mags.json request."
-      return Nothing
-  where
-    fillInStartDate endDate = addUTCTime (negate $ 10 * nominalDay) endDate
+  catReq <- case cr of
+              Just c ->
+                let catalogStartDate = addUTCTime (negate $ 10 * nominalDay) $ endDate c
+                in if (isJust $ startDate c)
+                   then return c
+                   else return $ MagsRequest (Just catalogStartDate) (endDate c)
+              Nothing -> do
+                -- a hacky way to strip time of day from current UTC time
+                isoDate <- liftIO $ iso8601ParseM
+                           =<< (\x -> x ++ "T00:00:00.000Z")
+                               <$> iso8601Show <$> utctDay <$> getCurrentTime
+                let time205959_999 = secondsToNominalDiffTime $ 20 * 3600 + 59 * 60 + 59 + 0.999
+                    catalogEndDate = addUTCTime time205959_999 isoDate
+                    catalogStartDate = addUTCTime (negate $ 10 * nominalDay) catalogEndDate
+                    todaysCatalog = MagsRequest (Just catalogStartDate) catalogEndDate
+                return todaysCatalog
 
-getMH5 :: AamulehtiMag -> LoginData -> IO (Maybe MH5Cookies)
-getMH5 mag lData =
+  liftIO $ putStrLn $ "Haetaan Aamulehden painosta " ++ iso8601Show (utctDay $ endDate catReq)
+  req <- parseRequest ("https://www.aamulehti.fi/aas/mags?include_linked=1&publication=aamulehti&start_date="
+                ++ iso8601Show (fromJust $ startDate catReq)
+                ++ "&end_date=" ++ iso8601Show (endDate catReq))
+  getResponseBody <$> httpJSON req
+
+
+aamulehtiLogin :: LoginRequest -> NetworkOperation LoginData
+aamulehtiLogin lr = do
+  req <- setRequestMethod "POST"
+         <$> setRequestBodyJSON lr
+         <$> parseRequest "https://www.aamulehti.fi/aas/login?publication=aamulehti"
+  getResponseBody <$> httpJSON req
+
+
+aamulehtiRedirect :: AamulehtiMag -> LoginData -> NetworkOperation RichiefiRedirect
+aamulehtiRedirect mag lData = do
   let magUuid = T.unpack $ uuid mag
       user = T.unpack $ username (lData :: LoginData)
-      req :: Maybe Request
-      req = addAuthHeader (B.pack $ T.unpack $ token lData)
-        <$> parseRequest ("https://www.aamulehti.fi/aas/mags/" ++ magUuid
-                         ++ "?publication=aamulehti&username=" ++ user)
-  in case req of
-       (Just r) -> do
-         redirectUrl <- getResponseBody <$> httpJSON r
-         let mh5Req = parseRequest (T.unpack $ redirect redirectUrl)
-         case mh5Req of  -- TODO: tarkastele löytyykö sekä mh5_tok että mh5_ret
-           (Just mh5R) -> do
-             gotCookies <- responseCookieJar <$> httpBS mh5R
-             return $ Just gotCookies
-           Nothing -> do
-             putStrLn "Richiefin redirect URLin kanssa ongelma."
-             return Nothing
-       Nothing -> do
-         putStrLn "Virheellisesti muodostettu MH5 request."
-         return Nothing
+  req <- addAuthHeader (B.pack $ T.unpack $ token lData)
+         <$> parseRequest ("https://www.aamulehti.fi/aas/mags/" ++ magUuid
+                            ++ "?publication=aamulehti&username=" ++ user)
+  getResponseBody <$> httpJSON req
   where
     addAuthHeader :: B.ByteString -> Request -> Request
     addAuthHeader token = addRequestHeader hAuthorization (B.concat ["Bearer ", token])
 
-getMagazineJson :: AamulehtiMag -> MH5Cookies -> IO (Maybe Magazine)
-getMagazineJson mag mh5 = do
+
+aamulehtiMH5 :: RichiefiRedirect -> NetworkOperation MH5Cookies
+aamulehtiMH5 redi = do
+  mh5Req <- parseRequest (T.unpack $ redirect redi)
+  responseCookieJar <$> httpBS mh5Req
+
+
+aamulehtiMagazine :: MH5Cookies -> NetworkOperation Magazine
+aamulehtiMagazine mh5 = do
   let magUrl = "https://aamulehti.ap.richiefi.net" ++
                foldl (\acc x -> if cookie_name x == "mh5_tok" then B.unpack (cookie_path x) else acc) "" (destroyCookieJar mh5) ++
                "/magazine.json"
-  protoReq <- parseRequest magUrl
-  let req = protoReq { cookieJar = Just mh5 }
-  getResponseBody <$> httpJSON req
+  req <- parseRequest magUrl
+  getResponseBody <$> httpJSON req { cookieJar = Just mh5 }

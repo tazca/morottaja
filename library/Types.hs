@@ -2,6 +2,7 @@
 
 module Types where
 
+import Control.Monad.Except
 import Data.Aeson
 import qualified Data.ByteString as B
 import qualified Data.Text as T
@@ -12,6 +13,10 @@ import Network.HTTP.Conduit (CookieJar)
 Huomioi tilanteet joissa JSONin result /= 200 virhetilanteiden hienosäätöä varten; nyt riittää vain että parser palauttaa virheen.
 
 --}
+
+type FileOperation = ExceptT String IO
+type NetworkOperation = ExceptT String IO
+
 data LoginRequest =
   LoginRequest { username :: T.Text
                , password :: T.Text

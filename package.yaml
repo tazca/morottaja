@@ -28,6 +28,7 @@ library:
   - filepath
   - http-conduit
   - http-types
+  - mtl
   - random
   - text
   - time

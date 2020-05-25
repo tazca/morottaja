@@ -1,4 +1,9 @@
 # [morottaja][]
 
-Kutsuntatapa: (vaihda haluttu päivä, ja luo linkki morottaja-executableen. pnrTemplate on rosoinen purkka.)
-echo -n "2020-05-18" | ./morottaja; cat pnrTemplate | ./assemblePDF.sh
+Lisää ensin aamulehtiCreds-tiedostoon ensimmäiselle riville käyttäjätunnus ja toiselle riville salasana.
+
+Luo linkki morottaja-executableen samaan kansioon printAamulehtiPDF.sh:n kanssa.
+
+./printAamulehtiPDF.sh
+
+Päivää ei tällä hetkellä voi valita
